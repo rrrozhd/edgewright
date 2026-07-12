@@ -1,0 +1,11 @@
+# @package _global_
+# Arch C: dynamic KG-Trie constrained decoding rebuilt from live candidates each hop.
+experiment:
+  name: arch_c_dynamic_trie
+  description: "Decoder policy with a per-hop dynamic constraint trie (Arch C)."
+  intended_controller: kgat.controller.decoder_policy.DecoderPolicyController
+  intended_synth: kgat.synthesis.path_reader.PathReaderSynthesizer
+  milestone: M7
+governance:
+  enabled: false
+  policies: []

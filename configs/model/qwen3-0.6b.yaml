@@ -1,0 +1,6 @@
+# Primary controller model. HF id is a config value (verify before first real run).
+name: qwen3-0.6b
+hf_id: Qwen/Qwen3-0.6B
+approx_params: 600000000
+quantization: qlora-4bit
+context_length: 32768

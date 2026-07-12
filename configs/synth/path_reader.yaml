@@ -1,0 +1,10 @@
+# LLM path-reader synthesizer: verbalizes retrieved paths, asks the reader LM for
+# answers, and only accepts entities that appear on the paths (falls back to
+# frontier tails when nothing parses). Needs the .[ml] extra.
+_target_: kgat.synthesis.path_reader.PathReaderSynthesizer
+model_name: ${model.hf_id}
+adapter_path: null
+max_new_tokens: 64
+max_paths: 10
+device: auto
+four_bit: auto

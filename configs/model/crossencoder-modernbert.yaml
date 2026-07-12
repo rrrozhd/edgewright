@@ -1,0 +1,6 @@
+# ~150M cheapest-controller floor (Arch: cross-encoder). Pairs with controller=crossencoder.
+name: crossencoder-modernbert
+hf_id: answerdotai/ModernBERT-base
+approx_params: 150000000
+quantization: none
+context_length: 8192

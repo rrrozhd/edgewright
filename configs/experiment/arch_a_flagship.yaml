@@ -1,0 +1,13 @@
+# @package _global_
+# Arch A (flagship): decoder controller with adaptive STOP + constrained decoding.
+# Descriptive metadata + governance defaults. The actual controller/synth are chosen
+# by the `controller`/`synth` groups (use controller=dummy until M4).
+experiment:
+  name: arch_a_flagship
+  description: "Decoder policy (Qwen3-0.6B) with budget-adaptive STOP, constrained to candidate relations."
+  intended_controller: kgat.controller.decoder_policy.DecoderPolicyController
+  intended_synth: kgat.synthesis.path_reader.PathReaderSynthesizer
+  milestone: M4-M5
+governance:
+  enabled: false
+  policies: []

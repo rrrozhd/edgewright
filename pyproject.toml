@@ -1,0 +1,90 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kgat"
+version = "0.0.1"
+description = "Budget-adaptive, governed knowledge-graph traversal for multi-hop KGQA"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "kgat authors" }]
+keywords = ["kgqa", "knowledge-graph", "rl", "traversal", "governance"]
+
+# Core runtime deps. Deliberately excludes torch/transformers so that the
+# foundation (schemas, graph, traversal, eval) installs and tests WITHOUT any
+# model dependencies. Heavy ML deps live in the [ml] / [gnn] extras.
+dependencies = [
+    "hydra-core>=1.3",
+    "omegaconf>=2.3",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+# Model + training arm. Not needed for M0-M2.
+ml = [
+    "torch>=2.2",
+    "transformers>=4.44",
+    "peft>=0.12",
+    "trl>=0.9",
+    "datasets>=2.20",
+    "accelerate>=0.33",
+    "bitsandbytes>=0.43",
+]
+# Colab: torch is preinstalled there — everything else the training arm needs.
+colab = [
+    "transformers>=4.44",
+    "peft>=0.12",
+    "accelerate>=0.33",
+    "bitsandbytes>=0.43",
+    "datasets>=2.20",
+]
+# GNN arm (Arch B).
+gnn = ["torch-geometric>=2.5"]
+# Dataset download/loading via HuggingFace `datasets` (lazy-imported).
+data = ["datasets>=2.20"]
+# Experiment tracking.
+wandb = ["wandb>=0.17"]
+# Optional graph backend.
+neo4j = ["neo4j>=5.20"]
+# Dev tooling: enough to run pytest + the offline dummy smoke run.
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/kgat/kgat"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kgat"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["notebooks"]  # Colab cells mix shell magics and imports by design
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "B008",  # function call in default arg (Hydra / dataclass field patterns)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+# Type-checking is advisory / non-blocking in CI for this repo.
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

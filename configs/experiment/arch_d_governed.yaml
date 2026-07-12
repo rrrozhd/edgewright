@@ -1,0 +1,18 @@
+# @package _global_
+# Arch D: the flagship controller wrapped in the full governance layer (per-hop
+# policy enforcement + audit certificate + overhead measurement).
+experiment:
+  name: arch_d_governed
+  description: "Governed traversal: flagship controller + mandatory per-hop policies + audit."
+  intended_controller: kgat.controller.decoder_policy.DecoderPolicyController
+  intended_synth: kgat.synthesis.path_reader.PathReaderSynthesizer
+  milestone: M8
+governance:
+  enabled: true
+  policies:
+    - relation_allowlist
+    - confidence_floor
+    # provenance_required needs a KG that carries edge sources (M9 transfer KG);
+    # the preprocessed WebQSP/CWQ subgraphs have none, so it would block every hop.
+  allowlist: null         # null -> ["*"] (wired but open); set patterns to enforce
+  confidence_floor: 0.0   # raise to block low-confidence expansions

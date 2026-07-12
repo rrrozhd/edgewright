@@ -1,0 +1,4 @@
+# GNN relation proposer (Arch B). Requires the .[gnn] extra. STUB until M7.
+_target_: kgat.controller.gnn_proposer.GNNProposerController
+model_name: ${model.hf_id}
+top_k: 8

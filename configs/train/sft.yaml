@@ -1,0 +1,19 @@
+# LoRA/QLoRA SFT of the controller on mined trajectories (kgat.train.sft).
+# Select with train=sft. data_path defaults to the mining output for the composed
+# dataset+split, so `mine -> sft` chains without repeating paths:
+#   python -m kgat.train.mine_trajectories dataset=webqsp dataset.split=train
+#   python -m kgat.train.sft train=sft dataset=webqsp dataset.split=train model=qwen3-0.6b
+sft:
+  data_path: ${mine.out_path}
+  output_dir: outputs/adapters/${model.name}-sft
+  max_examples: null          # cap for smoke runs
+  learning_rate: 2.0e-4
+  epochs: 3
+  batch_size: 8
+  grad_accum: 4
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  max_seq_len: 1024
+  four_bit: auto              # QLoRA on CUDA+bnb; plain LoRA elsewhere
+  gradient_checkpointing: false

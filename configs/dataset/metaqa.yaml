@@ -1,0 +1,8 @@
+# MetaQA (controllable hop depth: 1-hop / 2-hop / 3-hop). Set `split` / `hop` to the
+# desired subset once downloaded. Verify the hop-split naming against the release (M2).
+#   bash scripts/download_data.sh metaqa
+name: metaqa
+data_dir: ${oc.env:KGAT_DATA_DIR,data}/metaqa
+hop: 2
+split: dev
+limit: null

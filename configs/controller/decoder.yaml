@@ -1,0 +1,12 @@
+# Decoder policy (Arch A / C): trie-constrained decoding over candidate relations.
+# Loads lazily on first select(); needs the .[ml] extra (or .[colab] on Colab).
+# After SFT, point adapter_path at the trained LoRA dir, e.g.:
+#   controller=decoder controller.adapter_path=outputs/adapters/qwen3-0.6b-sft
+_target_: kgat.controller.decoder_policy.DecoderPolicyController
+model_name: ${model.hf_id}
+adapter_path: null
+temperature: 0.0        # 0 = greedy (eval); >0 = sampling (GRPO rollouts)
+device: auto            # auto -> cuda > mps > cpu
+four_bit: auto          # auto -> 4-bit only on CUDA with bitsandbytes
+max_prompt_tokens: 1024
+seed: ${seed}

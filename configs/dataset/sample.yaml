@@ -1,0 +1,7 @@
+# Tiny bundled dataset (same on-disk schema as the real releases) so the harness,
+# tests, and eval_frontier.sh run fully offline. NOT in the brief's config list — an
+# intentional addition for a green out-of-the-box smoke run.
+name: sample
+data_dir: data/sample
+split: dev
+limit: null

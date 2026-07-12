@@ -1,0 +1,4 @@
+# GPU-free reference policy: expand highest-degree relation, stop after max_hops.
+# The only controller that runs in the M0-M2 foundation.
+_target_: kgat.controller.base.DummyController
+max_hops: 2

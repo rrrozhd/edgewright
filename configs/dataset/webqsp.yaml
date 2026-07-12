@@ -1,0 +1,8 @@
+# WebQSP (Freebase). Download the preprocessed release into data_dir first:
+#   bash scripts/download_data.sh webqsp
+# On-disk schema documented in kgat.data.subgraph (assumed to match rmanluo/RoG-webqsp;
+# verify at M2).
+name: webqsp
+data_dir: ${oc.env:KGAT_DATA_DIR,data}/webqsp
+split: dev
+limit: null

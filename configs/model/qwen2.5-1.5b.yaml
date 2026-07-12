@@ -1,0 +1,5 @@
+name: qwen2.5-1.5b
+hf_id: Qwen/Qwen2.5-1.5B
+approx_params: 1500000000
+quantization: qlora-4bit
+context_length: 32768

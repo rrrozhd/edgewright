@@ -1,0 +1,8 @@
+# Tiny random-weight model for pipeline smoke tests (CPU-runnable, ~2 MB download).
+# Validates mine -> sft -> constrained-decode -> eval end-to-end; its accuracy is
+# meaningless. Not part of the research size sweep.
+name: tiny-test
+hf_id: sshleifer/tiny-gpt2
+approx_params: 100000
+quantization: none
+context_length: 1024

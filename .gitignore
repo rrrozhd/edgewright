@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Project outputs
+outputs/
+multirun/
+wandb/
+*.jsonl.log
+
+# Downloaded datasets & checkpoints (keep the tiny bundled sample under data/sample/)
+data/webqsp/
+data/cwq/
+data/metaqa/
+data/checkpoints/
+!data/sample/
+
+# OS
+.DS_Store

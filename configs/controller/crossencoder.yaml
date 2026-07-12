@@ -1,0 +1,4 @@
+# Cross-encoder floor (~150M). Pair with model=crossencoder-modernbert. STUB until M6.
+_target_: kgat.controller.crossencoder_policy.CrossEncoderPolicyController
+model_name: ${model.hf_id}
+stop_threshold: 0.5

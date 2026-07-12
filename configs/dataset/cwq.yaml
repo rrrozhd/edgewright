@@ -1,0 +1,6 @@
+# ComplexWebQuestions (Freebase). Download first:
+#   bash scripts/download_data.sh cwq
+name: cwq
+data_dir: ${oc.env:KGAT_DATA_DIR,data}/cwq
+split: dev
+limit: null

@@ -1,0 +1,11 @@
+# @package _global_
+# Arch B: a GNN proposes/prunes candidate relations feeding the traversal policy.
+experiment:
+  name: arch_b_gnn_proposer
+  description: "GNN relation proposer (Arch B) feeding a lightweight selector."
+  intended_controller: kgat.controller.gnn_proposer.GNNProposerController
+  intended_synth: kgat.synthesis.path_reader.PathReaderSynthesizer
+  milestone: M7
+governance:
+  enabled: false
+  policies: []

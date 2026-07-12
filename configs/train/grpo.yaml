@@ -1,0 +1,31 @@
+# Trajectory-level GRPO with the cost-penalized reward (kgat.train.grpo).
+# `lam` is the frontier-sweep knob:
+#   python -m kgat.train.grpo -m train.grpo.lam=0.0,0.05,0.1,0.2,0.4 dataset=webqsp
+# Nested under `grpo:` so the override path is train.grpo.lam.
+grpo:
+  # reward (kgat.train.reward)
+  lam: 0.1              # cost-penalty weight (see reward.py for the safe range)
+  cost_cap: 20.0        # cost value mapped to normalized cost 1.0
+  cost_axis: llm_calls
+  correctness: f1       # "f1" | "hit"
+
+  # rollouts
+  group_size: 8         # sampled traversals per question (the G in GRPO)
+  temperature: 1.0      # rollout sampling temperature (1.0 = model distribution)
+  batch_questions: 4    # questions per optimizer update
+  max_questions: null   # cap the train split for smoke runs
+  max_prompt_tokens: 1024
+
+  # optimization
+  learning_rate: 1.0e-6
+  epochs: 1
+  kl_coeff: 0.04        # k1 KL estimate vs the adapter-disabled base; 0 disables
+  save_every: 50        # updates between adapter checkpoints
+
+  # initialization: warm-start from the SFT adapter when present, else fresh LoRA
+  init_adapter: outputs/adapters/${model.name}-sft
+  output_dir: outputs/adapters/${model.name}-grpo-lam${train.grpo.lam}
+  four_bit: auto
+  lora_r: 16            # used only for a cold start (no SFT adapter found)
+  lora_alpha: 32
+  lora_dropout: 0.05

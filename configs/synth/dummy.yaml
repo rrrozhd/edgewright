@@ -1,0 +1,2 @@
+# Returns the frontier tails as answers. The synthesizer for the M0-M2 foundation.
+_target_: kgat.synthesis.base.DummySynthesizer

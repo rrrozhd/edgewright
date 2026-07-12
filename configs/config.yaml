@@ -1,0 +1,52 @@
+# Hydra root config. Composes the model / dataset / train / experiment / controller /
+# synth groups, then layers the run-level knobs below.
+#
+# The default composition runs OFFLINE with no model deps:
+#   python -m kgat.eval.harness           # dataset=sample, controller=dummy, synth=dummy
+# Swap in real pieces via overrides, e.g.:
+#   python -m kgat.eval.harness dataset=webqsp model=qwen3-0.6b experiment=arch_a_flagship controller=dummy
+
+defaults:
+  - model: qwen3-0.6b
+  - dataset: sample
+  - train: grpo
+  - experiment: arch_a_flagship
+  - controller: dummy
+  - synth: dummy
+  - _self_
+
+# Global seed (utils.seed.set_seed).
+seed: 42
+
+# Optional explicit label for this run's output files. Null -> auto-derived.
+run_label: null
+
+paths:
+  # Resolved against the launch dir (Hydra changes cwd). Holds *.jsonl / *.summary.json.
+  output_dir: outputs/runs
+
+# Per-question traversal budget (traversal.budget.BudgetCaps). Null == no cap on that axis.
+budget:
+  max_hops: 3
+  max_llm_calls: 50
+  max_prompt_tokens: null
+  max_gen_tokens: null
+  max_wall_ms: null
+
+engine:
+  beam_size: 16
+  max_steps: 32
+
+# Trajectory mining (kgat.train.mine_trajectories). The output feeds train=sft.
+mine:
+  out_path: outputs/sft/${dataset.name}_${dataset.split}.jsonl
+  beam_size: 64
+  max_hops: 4      # questions needing deeper gold paths are skipped (counted in stats)
+
+eval:
+  cost_axis: llm_calls      # frontier x-axis
+  accuracy_metric: hit      # frontier y-axis
+
+wandb:
+  enabled: false
+  project: kgat
