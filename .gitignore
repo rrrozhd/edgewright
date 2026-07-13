@@ -26,6 +26,7 @@ data/webqsp/
 data/cwq/
 data/metaqa/
 data/checkpoints/
+data/finkg/
 !data/sample/
 
 # OS

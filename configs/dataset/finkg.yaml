@@ -1,0 +1,7 @@
+# FinKG — financial KGQA in alphina's relation vocabulary (see docs/DESIGN-FINKG.md).
+# Generate first (synthetic offline, or from an alphina graph export):
+#   python -m kgat.data.finkg --out data/finkg --questions 600 --seed 42
+name: finkg
+data_dir: ${oc.env:KGAT_DATA_DIR,data}/finkg
+split: dev
+limit: null
