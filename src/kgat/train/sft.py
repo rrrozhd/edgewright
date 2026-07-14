@@ -65,11 +65,87 @@ def encode_example(example: dict, tokenizer: Any, *, max_seq_len: int) -> dict[s
     return {"input_ids": input_ids, "labels": labels}
 
 
-def run_sft(cfg: Any) -> Path:
-    """Train the LoRA adapter and return its output directory."""
+def fit_lora(
+    model: Any,
+    tokenizer: Any,
+    device: str,
+    *,
+    encoded: list[dict[str, list[int]]],
+    sft_cfg: Any,
+    output_dir: Path,
+    seed: int,
+) -> Path:
+    """Shared LoRA-SFT scaffold: collate, train, save adapter + metrics.
+
+    ``sft_cfg`` is any config section with the ``train/sft.yaml`` training knobs
+    (batch_size, grad_accum, epochs, learning_rate, group_by_length) — the
+    controller SFT (``run_sft``) and the backfill extractor SFT
+    (``kgat.train.sft_extractor``) both funnel through here so the trainer
+    behavior cannot drift between the two.
+    """
     require_ml()
     import torch
     from transformers import Trainer, TrainingArguments
+
+    pad_id = tokenizer.pad_token_id
+
+    def collate(batch: list[dict]) -> dict:
+        width = max(len(b["input_ids"]) for b in batch)
+        input_ids, labels, attention = [], [], []
+        for b in batch:
+            n = len(b["input_ids"])
+            pad = width - n
+            input_ids.append(b["input_ids"] + [pad_id] * pad)
+            labels.append(b["labels"] + [-100] * pad)
+            attention.append([1] * n + [0] * pad)
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+            "attention_mask": torch.tensor(attention, dtype=torch.long),
+        }
+
+    use_bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
+    extra_args: dict[str, Any] = {}
+    if bool(sft_cfg.get("group_by_length", True)):
+        # Length-bucketed batches cut padding waste (prompts span ~200-900 tokens).
+        # transformers 5.x removed this TrainingArguments field — pass it only when
+        # the installed version supports it.
+        import dataclasses
+
+        if any(f.name == "group_by_length" for f in dataclasses.fields(TrainingArguments)):
+            extra_args["group_by_length"] = True
+        else:
+            print("SFT: group_by_length unsupported by this transformers version — skipping")
+    args = TrainingArguments(
+        output_dir=str(output_dir / "trainer"),
+        per_device_train_batch_size=int(sft_cfg.batch_size),
+        gradient_accumulation_steps=int(sft_cfg.grad_accum),
+        num_train_epochs=float(sft_cfg.epochs),
+        learning_rate=float(sft_cfg.learning_rate),
+        logging_steps=10,
+        save_strategy="no",
+        report_to=[],
+        seed=seed,
+        bf16=use_bf16,
+        fp16=(device == "cuda" and not use_bf16),  # T4 has no bf16; fp32 would OOM
+        remove_unused_columns=False,
+        use_cpu=(device == "cpu"),
+        **extra_args,
+    )
+    trainer = Trainer(model=model, args=args, train_dataset=encoded, data_collator=collate)
+    result = trainer.train()
+
+    model.save_pretrained(str(output_dir))
+    tokenizer.save_pretrained(str(output_dir))
+    metrics = {"train_loss": result.training_loss, "n_examples": len(encoded)}
+    (output_dir / "sft_metrics.json").write_text(json.dumps(metrics, indent=2))
+    print(f"SFT done: loss={result.training_loss:.4f}; adapter -> {output_dir}")
+    return output_dir
+
+
+def run_sft(cfg: Any) -> Path:
+    """Train the controller LoRA adapter and return its output directory."""
+    require_ml()
 
     from kgat.utils.paths import resolve_path
     from kgat.utils.seed import set_seed
@@ -100,60 +176,15 @@ def run_sft(cfg: Any) -> Path:
     encoded = [encode_example(ex, tokenizer, max_seq_len=max_seq_len) for ex in examples]
     print(f"SFT: {len(encoded)} examples from {data_path} (device={device})")
 
-    pad_id = tokenizer.pad_token_id
-
-    def collate(batch: list[dict]) -> dict:
-        width = max(len(b["input_ids"]) for b in batch)
-        input_ids, labels, attention = [], [], []
-        for b in batch:
-            n = len(b["input_ids"])
-            pad = width - n
-            input_ids.append(b["input_ids"] + [pad_id] * pad)
-            labels.append(b["labels"] + [-100] * pad)
-            attention.append([1] * n + [0] * pad)
-        return {
-            "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "labels": torch.tensor(labels, dtype=torch.long),
-            "attention_mask": torch.tensor(attention, dtype=torch.long),
-        }
-
-    use_bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
-    extra_args: dict[str, Any] = {}
-    if bool(sft.get("group_by_length", True)):
-        # Length-bucketed batches cut padding waste (prompts span ~200-900 tokens).
-        # transformers 5.x removed this TrainingArguments field — pass it only when
-        # the installed version supports it.
-        import dataclasses
-
-        if any(f.name == "group_by_length" for f in dataclasses.fields(TrainingArguments)):
-            extra_args["group_by_length"] = True
-        else:
-            print("SFT: group_by_length unsupported by this transformers version — skipping")
-    args = TrainingArguments(
-        output_dir=str(output_dir / "trainer"),
-        per_device_train_batch_size=int(sft.batch_size),
-        gradient_accumulation_steps=int(sft.grad_accum),
-        num_train_epochs=float(sft.epochs),
-        learning_rate=float(sft.learning_rate),
-        logging_steps=10,
-        save_strategy="no",
-        report_to=[],
+    return fit_lora(
+        model,
+        tokenizer,
+        device,
+        encoded=encoded,
+        sft_cfg=sft,
+        output_dir=output_dir,
         seed=int(cfg.seed),
-        bf16=use_bf16,
-        fp16=(device == "cuda" and not use_bf16),  # T4 has no bf16; fp32 would OOM
-        remove_unused_columns=False,
-        use_cpu=(device == "cpu"),
-        **extra_args,
     )
-    trainer = Trainer(model=model, args=args, train_dataset=encoded, data_collator=collate)
-    result = trainer.train()
-
-    model.save_pretrained(str(output_dir))
-    tokenizer.save_pretrained(str(output_dir))
-    metrics = {"train_loss": result.training_loss, "n_examples": len(encoded)}
-    (output_dir / "sft_metrics.json").write_text(json.dumps(metrics, indent=2))
-    print(f"SFT done: loss={result.training_loss:.4f}; adapter -> {output_dir}")
-    return output_dir
 
 
 def _main() -> None:
@@ -171,4 +202,4 @@ if __name__ == "__main__":
     _main()
 
 
-__all__ = ["run_sft", "read_sft_examples", "encode_example"]
+__all__ = ["run_sft", "fit_lora", "read_sft_examples", "encode_example"]

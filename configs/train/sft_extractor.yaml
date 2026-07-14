@@ -1,0 +1,24 @@
+# LoRA/QLoRA SFT of the backfill triple extractor on distant-supervision pairs
+# (kgat.train.sft_extractor). Select with train=sft_extractor. data_dir points at a
+# kgat.data.backfill_export output (train/dev/test.jsonl + vocab.json):
+#   python -m kgat.data.backfill_export --out data/backfill/synthetic
+#   python -m kgat.train.sft_extractor train=sft_extractor model=qwen3-0.6b
+sft_extractor:
+  data_dir: data/backfill/synthetic
+  split: train
+  output_dir: outputs/adapters/${model.name}-extractor
+  max_examples: null          # cap for smoke runs
+  max_triples: 8              # grammar cap on triples per chunk
+  learning_rate: 2.0e-4
+  epochs: 3
+  # Same memory story as train/sft.yaml: the CE loss materializes
+  # batch x seq x vocab logits, which bounds per-device batch, not the weights.
+  batch_size: 2
+  grad_accum: 16
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  max_seq_len: 1024
+  four_bit: auto              # QLoRA on CUDA+bnb; plain LoRA elsewhere
+  gradient_checkpointing: true
+  group_by_length: true       # length-bucketed batches -> far less padding waste
