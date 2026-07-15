@@ -71,18 +71,40 @@ def _strip_suffixes(name: str) -> str:
     return " ".join(words)
 
 
+def _span_pattern(normalized_words: str) -> re.Pattern | None:
+    words = normalized_words.split()
+    if not words:
+        return None
+    return re.compile(
+        r"\b" + r"[\W_]+".join(re.escape(w) for w in words) + r"\b", re.IGNORECASE
+    )
+
+
+def ground_span(
+    target: str, text: str, aliases: Mapping[str, Collection[str]] | None = None
+) -> tuple[int, int] | None:
+    """Locate the grounding span of ``target`` in the ORIGINAL chunk coordinates.
+
+    Tries the full name first (best provenance), then the suffix-stripped core,
+    then aliases — matching case-insensitively across punctuation/whitespace
+    variation. Returns ``(start, end)`` char offsets into ``text`` (the write
+    certificate's ``evidence_start/end`` analog), or ``None`` when the target is
+    not in its own evidence.
+    """
+    for cand in [target, *((aliases or {}).get(target, ()))]:
+        for variant in (_normalize(cand), _strip_suffixes(cand)):
+            pattern = _span_pattern(variant)
+            if pattern is None:
+                continue
+            match = pattern.search(text)
+            if match:
+                return match.span()
+    return None
+
+
 def grounded(target: str, text: str, aliases: Mapping[str, Collection[str]] | None = None) -> bool:
     """Is the target name (or an alias, or its suffix-stripped core) in the chunk?"""
-    hay = " " + _normalize(text) + " "
-    candidates = [target, *((aliases or {}).get(target, ()))]
-    for cand in candidates:
-        core = _strip_suffixes(cand)
-        if core and f" {core} " in hay:
-            return True
-        full = _normalize(cand)
-        if full and f" {full} " in hay:
-            return True
-    return False
+    return ground_span(target, text, aliases) is not None
 
 
 def filer_is_party(text: str) -> bool:
@@ -151,6 +173,7 @@ def make_rule_judge(
 
 __all__ = [
     "EdgeJudgeFn",
+    "ground_span",
     "grounded",
     "filer_is_party",
     "GateReport",

@@ -120,6 +120,7 @@ class ExtractionPair:
     confidence: float | None = None
     company: str | None = None
     item_key: str | None = None
+    chunk: str | None = None  # alphina chunk_id — the write certificate's provenance key
 
     def to_record(self) -> dict:
         return {
@@ -130,6 +131,7 @@ class ExtractionPair:
             "confidence": self.confidence,
             "company": self.company,
             "item_key": self.item_key,
+            "chunk": self.chunk,
         }
 
 
@@ -167,6 +169,7 @@ def load_export_jsonl(path: str | Path) -> list[ExtractionPair]:
                     "confidence": None,
                     "company": row.get("company_id"),
                     "item_key": row.get("item_key"),
+                    "chunk": str(chunk_id) if chunk_id is not None else None,
                 },
             )
             if entry["filer"] != filer:
@@ -199,6 +202,7 @@ def load_export_jsonl(path: str | Path) -> list[ExtractionPair]:
             confidence=e["confidence"],
             company=str(e["company"]) if e["company"] is not None else None,
             item_key=e["item_key"],
+            chunk=e["chunk"],
         )
         for (filing, _), e in grouped.items()
     ]
@@ -426,6 +430,7 @@ def read_pairs_jsonl(path: str | Path, max_examples: int | None = None) -> list[
                     confidence=row.get("confidence"),
                     company=row.get("company"),
                     item_key=row.get("item_key"),
+                    chunk=row.get("chunk"),
                 )
             )
             if max_examples is not None and len(pairs) >= max_examples:
