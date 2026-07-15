@@ -23,8 +23,7 @@ quality-per-dollar, with auditability as a first-class property. Model size is a
 
 ## Status
 
-Both pipelines run end-to-end on real data; per-run detail lives in
-[STATUS.md](STATUS.md), artifacts in `docs/results/`.
+Both pipelines run end-to-end on real data.
 
 **Read path:** the full chain — mine → SFT → trie-constrained decode → GRPO —
 is GPU-validated. On FinKG, SFT lifts the 0.6B controller from 0.16 to 0.82 Hit
@@ -35,8 +34,8 @@ potential shaping) reaches 0.89 at unchanged cost.
 production SEC-filing pipeline's own logged extractions (every committed edge
 stores its evidence), the grammar-constrained 0.6B extractor recovers **~86% of
 the teacher's edges while escalating only ~21–28% of chunks** to the teacher —
-roughly a 60–80% cut of the measured backfill API cost at a chosen, dialable
-quality point. Phase 2 (GRPO over per-chunk `{skip | extract | escalate}` with a
+a dialable cost/quality frontier for graph construction, with escalation rate as
+the cost axis. Phase 2 (GRPO over per-chunk `{skip | extract | escalate}` with a
 judge-audited reward) is scaffolded and tested: objective evidence gates + the
 teacher's critic distilled into a 150M cross-encoder from ~490k logged verdicts
 (no LLM inside the RL loop), and write-path governance mirrors the read path
@@ -49,12 +48,12 @@ teacher's critic distilled into a 150M cross-encoder from ~490k logged verdicts
 | M2 | Baseline reproduction harness (RoG / GCR / GNN-RAG wrappers) | 🟡 stubbed (needs verified official repos + published numbers) |
 | M3 | Trajectory mining (BFS oracle → engine replay → SFT JSONL) | ✅ implemented + tested |
 | M4 | Decoder controller + trie-constrained decoding + LoRA/QLoRA SFT | ✅ GPU-validated (FinKG + WebQSP mining) |
-| M5 | Trajectory-level GRPO + λ frontier | ✅ GPU-validated (sweeps in docs/results/) |
+| M5 | Trajectory-level GRPO + λ frontier | ✅ GPU-validated (λ + lr sweeps) |
 | M6 | Size sweep + cross-encoder floor | 🟡 cross-encoder now trained as the write-path judge; controller floor pending |
 | M7 | Arch B / Arch C arms | ⏳ stub (`gnn_proposer`; dynamic trie shares `constrained_decoding`) |
 | M8 | Governance layer + audit + overhead measurement | 🟡 read + write policies/certificates implemented & wired; overhead study pending |
 | M9 | Ablations, transfer KG, write-up | ⏳ future |
-| — | **Write path**: extractor SFT + confidence cascade + frontier | ✅ 4 measured rounds on real data (docs/results/backfill-*) |
+| — | **Write path**: extractor SFT + confidence cascade + frontier | ✅ 4 measured rounds on real data |
 | — | **Write path phase 2**: routing RL + distilled judge + edge governance | 🟡 machinery + judge v1 done; GRPO loop wiring pending |
 
 ---
@@ -189,7 +188,6 @@ src/kgat/
   utils/          HF loading, JSONL + optional W&B logging, seeding
 scripts/          download_data / run_sft / run_grpo / run_backfill_pilot / eval_frontier / sweep
 tests/            pytest suite (135 tests; every module above with pure-python coverage)
-docs/             design notes (DESIGN-*.md) + measured results (docs/results/)
 ```
 
 ## Design notes (deviations from the brief, and why)
