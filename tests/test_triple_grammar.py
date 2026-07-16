@@ -48,8 +48,11 @@ def forcing_logits_fn(gold_ids: list[int]):
 def test_build_validation():
     with pytest.raises(ValueError):
         build_triple_grammar([], TARGETS, TOK, eos_id=EOS)
-    with pytest.raises(ValueError):
-        build_triple_grammar(RELATIONSHIP_TYPES, [], TOK, eos_id=EOS)
+    # Empty TARGETS is legal (chunk-local candidates found nothing): the grammar
+    # collapses to NONE | sentinels; relations are simply not offered.
+    empty = build_triple_grammar(RELATIONSHIP_TYPES, [], TOK, eos_id=EOS)
+    assert empty.targets == ()
+    assert list(empty.first.id_map.values()) == [NONE_LABEL]
     with pytest.raises(ValueError):  # reserved separator inside a name
         build_triple_grammar(RELATIONSHIP_TYPES, ["Weird ; Name"], TOK, eos_id=EOS)
     with pytest.raises(ValueError):

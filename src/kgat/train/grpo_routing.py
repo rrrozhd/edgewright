@@ -102,9 +102,11 @@ def build_judge(spec: str, *, threshold: float = 0.5, device: str = "auto") -> E
 class EpisodeRollout:
     """One sampled routing of a filing, reduced to what the gradient pass needs."""
 
-    # per chunk: (prompt_ids, gen_ids, lp_old_sum) — lp_old is the rollout
-    # policy's temp-1 grammar-masked SUM logprob (decode_triples.logprob).
-    chunks: list[tuple[list[int], tuple[int, ...], float]]
+    # per chunk: (prompt_ids, gen_ids, lp_old_sum, grammar) — lp_old is the
+    # rollout policy's temp-1 grammar-masked SUM logprob (decode_triples.logprob);
+    # the grammar rides along so the gradient pass renormalizes over the SAME
+    # constraint (chunk-local grammars differ per chunk).
+    chunks: list[tuple[list[int], tuple[int, ...], float, TripleGrammar]]
     reward: float  # macro mean of chunk_rewards (logging + group skip check)
     n_escalated: int
     chunk_rewards: list[float] = field(default_factory=list)
@@ -116,7 +118,7 @@ def rollout_episode(
     pairs: list[ExtractionPair],
     model: Any,
     tokenizer: Any,
-    grammar: TripleGrammar,
+    grammars: list[TripleGrammar],
     *,
     device: str,
     temperature: float,
@@ -125,14 +127,18 @@ def rollout_episode(
     judge: EdgeJudgeFn | None,
     reward_kwargs: dict,
 ) -> EpisodeRollout:
-    """Sample one routing of a filing and score it (no grad)."""
+    """Sample one routing of a filing and score it (no grad).
+
+    ``grammars`` aligns with ``pairs`` — a shared grammar repeated (vocab mode)
+    or one per chunk (chunk-local candidates).
+    """
     import torch
 
     from kgat.utils.hf import forward_last_logits
 
     chunk_records = []
     decisions = []
-    for pair in pairs:
+    for pair, grammar in zip(pairs, grammars, strict=True):
         prompt = format_extraction_prompt(pair.filer, pair.text, grammar.relations)
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         if len(prompt_ids) > max_prompt_tokens:
@@ -147,7 +153,7 @@ def rollout_episode(
 
         result = decode_triples(logits_fn, grammar, temperature=temperature, rng=rng)
         decisions.append(decision_from_result(result))
-        chunk_records.append((prompt_ids, result.ids, result.logprob))
+        chunk_records.append((prompt_ids, result.ids, result.logprob, grammar))
 
     chunk_rs, mean_r = per_chunk_rewards(pairs, decisions, judge=judge, **reward_kwargs)
     r = routing_reward(pairs, decisions, judge=judge, **reward_kwargs)  # micro diagnostics
@@ -238,14 +244,33 @@ def run_grpo_routing(cfg: Any) -> Path:
             model, r=int(g.lora_r), alpha=int(g.lora_alpha), dropout=float(g.lora_dropout)
         )
 
-    grammar = build_triple_grammar(
-        vocab["relations"],
-        vocab["targets"],
-        tokenizer,
-        eos_id=tokenizer.eos_token_id,
-        max_triples=int(g.max_triples),
-        sentinels=(ESCALATE_LABEL,),
-    )
+    targets_mode = str(g.get("targets_mode", "vocab"))
+    if targets_mode == "chunk":
+        from kgat.data.chunk_targets import chunk_target_candidates
+
+        def grammar_for(pair: ExtractionPair) -> TripleGrammar:
+            return build_triple_grammar(
+                vocab["relations"],
+                chunk_target_candidates(pair.text, filer=pair.filer),
+                tokenizer,
+                eos_id=tokenizer.eos_token_id,
+                max_triples=int(g.max_triples),
+                sentinels=(ESCALATE_LABEL,),
+            )
+    elif targets_mode == "vocab":
+        shared_grammar = build_triple_grammar(
+            vocab["relations"],
+            vocab["targets"],
+            tokenizer,
+            eos_id=tokenizer.eos_token_id,
+            max_triples=int(g.max_triples),
+            sentinels=(ESCALATE_LABEL,),
+        )
+
+        def grammar_for(pair: ExtractionPair) -> TripleGrammar:
+            return shared_grammar
+    else:
+        raise ValueError(f"targets_mode must be 'vocab' or 'chunk', got {targets_mode!r}")
     judge = build_judge(
         str(g.get("judge", "distant")),
         threshold=float(g.get("judge_threshold", 0.5)),
@@ -295,12 +320,13 @@ def run_grpo_routing(cfg: Any) -> Path:
             rollouts: list[EpisodeRollout] = []
             model.eval()
             for ep_pairs in batch:
+                ep_grammars = [grammar_for(p) for p in ep_pairs]  # built once per episode
                 group = [
                     rollout_episode(
                         ep_pairs,
                         model,
                         tokenizer,
-                        grammar,
+                        ep_grammars,
                         device=device,
                         temperature=float(g.temperature),
                         rng=rng,
@@ -344,9 +370,9 @@ def run_grpo_routing(cfg: Any) -> Path:
                         ref_sums.append(
                             [
                                 grammar_logprob(
-                                    model, grammar, prompt_ids, gen_ids, device=device
+                                    model, chunk_grammar, prompt_ids, gen_ids, device=device
                                 )[0].item()
-                                for prompt_ids, gen_ids, _ in rollout.chunks
+                                for prompt_ids, gen_ids, _, chunk_grammar in rollout.chunks
                             ]
                         )
                 model.set_adapter("default")
@@ -360,12 +386,14 @@ def run_grpo_routing(cfg: Any) -> Path:
                 optimizer.zero_grad()
                 batch_loss = 0.0
                 for ri, rollout in enumerate(rollouts):
-                    for ci, (prompt_ids, gen_ids, lp_old_sum) in enumerate(rollout.chunks):
+                    for ci, (prompt_ids, gen_ids, lp_old_sum, chunk_grammar) in enumerate(
+                        rollout.chunks
+                    ):
                         adv = rollout.chunk_advantages[ci]
                         if abs(adv) < 1e-12 and not can_kl:
                             continue  # zero-advantage chunk contributes no gradient
                         lp_sum, n_tok = grammar_logprob(
-                            model, grammar, prompt_ids, gen_ids, device=device
+                            model, chunk_grammar, prompt_ids, gen_ids, device=device
                         )
                         ratio = torch.exp(lp_sum - lp_old_sum)
                         clipped = torch.clamp(ratio, 1.0 - clip_lo, 1.0 + clip_hi)

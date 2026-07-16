@@ -19,6 +19,7 @@ grpo_routing:
   # (the class that protects the graph) for -0.002 overall.
   judge_threshold: 0.65
   max_triples: 28
+  targets_mode: vocab         # vocab (closed list) | chunk (open-vocab spans per chunk)
   max_filings: null
   max_chunks_per_filing: 12   # episode cap: rollout cost = group_size x chunks x decode
   group_size: 4

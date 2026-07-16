@@ -294,8 +294,11 @@ def build_triple_grammar(
     rels = list(dict.fromkeys(relations))
     tgts = list(dict.fromkeys(targets))
     sents = list(dict.fromkeys(sentinels))
-    if not rels or not tgts:
-        raise ValueError("triple grammar needs at least one relation and one target")
+    if not rels:
+        raise ValueError("triple grammar needs at least one relation")
+    # An EMPTY target set is legal (chunk-local candidates found nothing): no
+    # relation can complete a triple, so relations are simply not offered and
+    # the grammar collapses to NONE | sentinels.
     if max_triples < 1:
         raise ValueError("max_triples must be >= 1")
     reserved = (NONE_LABEL, REL_TARGET_SEP.strip(), TRIPLE_SEP.strip(), *sents)
@@ -332,15 +335,25 @@ def build_triple_grammar(
     sentinel_entries: dict[tuple[int, ...], object] = {
         ids: s for s, ids in enc_sentinel.items()
     }
+    if tgts:
+        first = _build_segment({enc_none: NONE_LABEL, **sentinel_entries, **rel_entries})
+        rel_segment = _build_segment(rel_entries)
+        target_segment = _build_segment({**end_entries, **cont_entries})
+        target_last = _build_segment(end_entries)
+    else:
+        # Targetless grammar: relations unreachable; the triple segments are
+        # placeholders that decoding can never enter.
+        first = _build_segment({enc_none: NONE_LABEL, **sentinel_entries})
+        rel_segment = target_segment = target_last = _build_segment({enc_none: NONE_LABEL})
     return TripleGrammar(
         relations=tuple(rels),
         targets=tuple(tgts),
         eos_id=eos_id,
         max_triples=max_triples,
-        first=_build_segment({enc_none: NONE_LABEL, **sentinel_entries, **rel_entries}),
-        rel=_build_segment(rel_entries),
-        target=_build_segment({**end_entries, **cont_entries}),
-        target_last=_build_segment(end_entries),
+        first=first,
+        rel=rel_segment,
+        target=target_segment,
+        target_last=target_last,
         enc_none=enc_none,
         enc_rel=enc_rel,
         enc_target=enc_target,

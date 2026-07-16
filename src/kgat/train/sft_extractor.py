@@ -102,22 +102,65 @@ def run_sft_extractor(cfg: Any) -> Path:
     )
     model.print_trainable_parameters()
 
-    grammar = build_triple_grammar(
-        vocab["relations"],
-        vocab["targets"],
-        tokenizer,
-        eos_id=tokenizer.eos_token_id,
-        max_triples=int(sft.max_triples),
-    )
     max_seq_len = int(sft.max_seq_len)
-    encoded = [
-        encode_extraction_example(p, tokenizer, grammar, max_seq_len=max_seq_len) for p in pairs
-    ]
-    n_pos = sum(1 for p in pairs if p.triples)
-    print(
-        f"extractor SFT: {len(encoded)} pairs ({n_pos} positive) from {data_dir}, "
-        f"{len(grammar.targets)} grammar targets (device={device})"
-    )
+    max_triples = int(sft.max_triples)
+    targets_mode = str(sft.get("targets_mode", "vocab"))
+
+    if targets_mode == "chunk":
+        # Open-vocabulary: candidates are the chunk's own capitalized spans; the
+        # grammar is per-example and no corpus-level name list exists. Teacher
+        # labels are remapped onto candidate surface forms; unmatchable labels
+        # are unlearnable under this constraint and get dropped (counted).
+        from dataclasses import replace
+
+        from kgat.data.chunk_targets import chunk_target_candidates, match_candidate
+
+        encoded, dropped = [], 0
+        for p in pairs:
+            candidates = chunk_target_candidates(p.text, filer=p.filer)
+            kept = []
+            for relation, target in p.triples:
+                surface = match_candidate(target, candidates)
+                if surface is None:
+                    dropped += 1
+                else:
+                    kept.append((relation, surface))
+            grammar = build_triple_grammar(
+                vocab["relations"],
+                candidates,
+                tokenizer,
+                eos_id=tokenizer.eos_token_id,
+                max_triples=max_triples,
+            )
+            encoded.append(
+                encode_extraction_example(
+                    replace(p, triples=tuple(kept)), tokenizer, grammar,
+                    max_seq_len=max_seq_len,
+                )
+            )
+        n_gold = sum(len(p.triples) for p in pairs)
+        print(
+            f"extractor SFT (chunk-local targets): {len(encoded)} pairs, "
+            f"{dropped}/{n_gold} gold edges unmatchable in-chunk (dropped)"
+        )
+    elif targets_mode == "vocab":
+        grammar = build_triple_grammar(
+            vocab["relations"],
+            vocab["targets"],
+            tokenizer,
+            eos_id=tokenizer.eos_token_id,
+            max_triples=max_triples,
+        )
+        encoded = [
+            encode_extraction_example(p, tokenizer, grammar, max_seq_len=max_seq_len)
+            for p in pairs
+        ]
+        print(
+            f"extractor SFT: {len(encoded)} pairs from {data_dir}, "
+            f"{len(grammar.targets)} grammar targets (device={device})"
+        )
+    else:
+        raise ValueError(f"targets_mode must be 'vocab' or 'chunk', got {targets_mode!r}")
 
     return fit_lora(
         model,

@@ -200,15 +200,30 @@ def decode_pairs(
     grammar: Any,
     *,
     max_prompt_tokens: int = 1024,
+    grammar_for: Any = None,
+    normalize: Any = None,
 ) -> list[ExtractionOutcome]:
-    """Greedy grammar-constrained extraction over pairs with the loaded model."""
+    """Greedy grammar-constrained extraction over pairs with the loaded model.
+
+    ``grammar_for(pair)`` overrides the shared grammar per pair (chunk-local
+    candidates); ``normalize(name)`` maps gold AND predicted target names to a
+    comparison key before scoring (resolver-style loose matching — without it,
+    a chunk-local surface form like "NVIDIA Corporation" would count as a miss
+    against the teacher label "NVIDIA Corp").
+    """
     import torch
 
     from kgat.utils.hf import forward_last_logits
 
+    def norm_triples(triples):
+        if normalize is None:
+            return tuple(triples)
+        return tuple((r, normalize(t)) for r, t in triples)
+
     outcomes: list[ExtractionOutcome] = []
     for i, pair in enumerate(pairs):
-        prompt = format_extraction_prompt(pair.filer, pair.text, grammar.relations)
+        g = grammar_for(pair) if grammar_for is not None else grammar
+        prompt = format_extraction_prompt(pair.filer, pair.text, g.relations)
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         if len(prompt_ids) > max_prompt_tokens:  # keep the tail ("...extraction:")
             prompt_ids = prompt_ids[-max_prompt_tokens:]
@@ -222,10 +237,12 @@ def decode_pairs(
             idx = torch.tensor(allowed, dtype=torch.long, device=row.device)
             return row.index_select(0, idx).float().cpu().tolist()
 
-        result = decode_triples(logits_fn, grammar)
+        result = decode_triples(logits_fn, g)
         outcomes.append(
             ExtractionOutcome(
-                gold=pair.triples, pred=result.triples, confidence=result.confidence
+                gold=norm_triples(pair.triples),
+                pred=norm_triples(result.triples),
+                confidence=result.confidence,
             )
         )
         if (i + 1) % 25 == 0:
@@ -253,6 +270,18 @@ def main() -> None:
         help="4-bit base for the eval; default fp16 (4-bit eval jitter masked real "
         "effects in the GRPO sweep v1 — see STATUS.md)",
     )
+    parser.add_argument(
+        "--targets",
+        default="vocab",
+        choices=["vocab", "chunk"],
+        help="target constraint: closed vocab.json list, or open-vocabulary "
+        "chunk-local capitalized spans",
+    )
+    parser.add_argument(
+        "--loose-match",
+        action="store_true",
+        help="score with resolver-style normalized names (recommended with --targets chunk)",
+    )
     parser.add_argument("--min-recall", type=float, default=0.8, help="success-gate recall floor")
     parser.add_argument(
         "--taus", default=None, help="comma-separated thresholds (default 0.00..1.05 step 0.05)"
@@ -269,16 +298,45 @@ def main() -> None:
     model, tokenizer, device = load_causal_lm(
         args.model_id, adapter_path=args.adapter, device=args.device, four_bit=four_bit
     )
-    grammar = build_triple_grammar(
-        vocab["relations"],
-        vocab["targets"],
-        tokenizer,
-        eos_id=tokenizer.eos_token_id,
-        max_triples=args.max_triples,
-    )
-    print(f"cascade eval: {len(pairs)} {args.split} pairs, {len(grammar.targets)} targets")
+    grammar = None
+    grammar_for = None
+    if args.targets == "chunk":
+        from kgat.data.chunk_targets import chunk_target_candidates
+
+        def grammar_for(pair):
+            return build_triple_grammar(
+                vocab["relations"],
+                chunk_target_candidates(pair.text, filer=pair.filer),
+                tokenizer,
+                eos_id=tokenizer.eos_token_id,
+                max_triples=args.max_triples,
+            )
+
+        print(f"cascade eval: {len(pairs)} {args.split} pairs, chunk-local targets")
+    else:
+        grammar = build_triple_grammar(
+            vocab["relations"],
+            vocab["targets"],
+            tokenizer,
+            eos_id=tokenizer.eos_token_id,
+            max_triples=args.max_triples,
+        )
+        print(f"cascade eval: {len(pairs)} {args.split} pairs, {len(grammar.targets)} targets")
+
+    normalize = None
+    if args.loose_match:
+        from kgat.data.chunk_targets import normalize_name
+
+        normalize = normalize_name
     outcomes = decode_pairs(
-        pairs, model, tokenizer, device, grammar, max_prompt_tokens=args.max_prompt_tokens
+        pairs,
+        model,
+        tokenizer,
+        device,
+        grammar,
+        max_prompt_tokens=args.max_prompt_tokens,
+        grammar_for=grammar_for,
+        normalize=normalize,
     )
 
     out_dir = Path(args.out_dir)
