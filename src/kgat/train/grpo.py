@@ -384,7 +384,9 @@ def run_grpo(cfg: Any) -> Path:
             # memory is one step's activations regardless of trajectory length.
             # lp_old (rollout policy) stays fixed across the inner updates; the
             # clipped ratio is what makes updates_per_batch > 1 sound.
-            model.train()
+            # Stay in eval mode: train() enables LoRA dropout, which perturbs the
+            # recomputed logprobs vs the (eval-mode) rollout's — ratios != 1 even
+            # on-policy. Grads flow fine in eval; only dropout behavior differs.
             batch_loss = 0.0
             for _ in range(updates_per_batch):
                 optimizer.zero_grad()

@@ -28,9 +28,15 @@ grpo_routing:
   temperature: 1.0            # rollout sampling; ratios exact at T=1
   lam: 0.1
   escalation_cost_tokens: 2000
-  cost_cap: 20000
+  # Per-CHUNK cap (sweep-v1 lesson: episode-level caps give lam uneven leverage
+  # across filing sizes). Equal to the escalation price, so normalized cost ~=
+  # the fraction of chunks escalated — lam reads against the frontier axis.
+  cost_cap_per_chunk: 2000
   precision_weight: 0.5
   recall_weight: 0.5
+  # KL anchor vs the FROZEN warm-start adapter (not the bare base): keeps RL
+  # from forgetting extraction quality. 0 disables.
+  kl_coeff: 0.02
   loss_norm: dr_grpo          # token-sum over norm_constant (no 1/len bias)
   norm_constant: 32.0
   scale_rewards: false        # Dr. GRPO: no group-std difficulty bias

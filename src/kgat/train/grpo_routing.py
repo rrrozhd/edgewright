@@ -47,6 +47,7 @@ from kgat.data.backfill_export import ExtractionPair, read_pairs_jsonl
 from kgat.train.backfill_routing import (
     ESCALATE_LABEL,
     decision_from_result,
+    per_chunk_rewards,
     routing_reward,
 )
 from kgat.train.edge_judge import EdgeJudgeFn, make_rule_judge
@@ -104,9 +105,10 @@ class EpisodeRollout:
     # per chunk: (prompt_ids, gen_ids, lp_old_sum) — lp_old is the rollout
     # policy's temp-1 grammar-masked SUM logprob (decode_triples.logprob).
     chunks: list[tuple[list[int], tuple[int, ...], float]]
-    reward: float
+    reward: float  # macro mean of chunk_rewards (logging + group skip check)
     n_escalated: int
-    advantage: float = 0.0
+    chunk_rewards: list[float] = field(default_factory=list)
+    chunk_advantages: list[float] = field(default_factory=list)
     metrics: dict = field(default_factory=dict)
 
 
@@ -147,11 +149,13 @@ def rollout_episode(
         decisions.append(decision_from_result(result))
         chunk_records.append((prompt_ids, result.ids, result.logprob))
 
-    r = routing_reward(pairs, decisions, judge=judge, **reward_kwargs)
+    chunk_rs, mean_r = per_chunk_rewards(pairs, decisions, judge=judge, **reward_kwargs)
+    r = routing_reward(pairs, decisions, judge=judge, **reward_kwargs)  # micro diagnostics
     return EpisodeRollout(
         chunks=chunk_records,
-        reward=r.reward,
+        reward=mean_r,
         n_escalated=r.n_escalated,
+        chunk_rewards=chunk_rs,
         metrics={"precision": r.precision, "recall": r.recall, "cost": r.normalized_cost},
     )
 
@@ -250,10 +254,18 @@ def run_grpo_routing(cfg: Any) -> Path:
     reward_kwargs = {
         "lam": float(g.lam),
         "escalation_cost_tokens": float(g.escalation_cost_tokens),
-        "cost_cap": float(g.cost_cap),
+        "cost_cap_per_chunk": float(g.cost_cap_per_chunk),
         "precision_weight": float(g.precision_weight),
         "recall_weight": float(g.recall_weight),
     }
+
+    # KL anchor: a frozen copy of the WARM-START adapter (the SFT extractor is
+    # the behavior to preserve — disable_adapter would anchor to the bare base).
+    kl_coeff = float(g.get("kl_coeff", 0.0))
+    can_kl = kl_coeff > 0 and adapter_path is not None and hasattr(model, "load_adapter")
+    if can_kl:
+        model.load_adapter(adapter_path, adapter_name="ref")
+        model.set_adapter("default")
 
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=float(g.learning_rate))
@@ -298,33 +310,70 @@ def run_grpo_routing(cfg: Any) -> Path:
                     )
                     for _ in range(group_size)
                 ]
-                advantages = compute_advantages(
-                    [r.reward for r in group], scale_rewards=scale_rewards
-                )
-                if max(abs(a) for a in advantages) < 1e-9:
-                    continue  # uniform group — no learning signal
-                for r, adv in zip(group, advantages, strict=True):
-                    r.advantage = adv
+                # Per-chunk-position advantages: group members route the SAME
+                # chunk list, so the group baseline at each position is a
+                # matched-pair comparison — exact per-decision credit, the
+                # write-path analog of exact shaping (DESIGN-GRAPH-RL §B).
+                n_chunks = len(group[0].chunk_rewards)
+                any_signal = False
+                for r in group:
+                    r.chunk_advantages = [0.0] * n_chunks
+                for j in range(n_chunks):
+                    advs = compute_advantages(
+                        [r.chunk_rewards[j] for r in group], scale_rewards=scale_rewards
+                    )
+                    if max(abs(a) for a in advs) >= 1e-9:
+                        any_signal = True
+                    for r, adv in zip(group, advs, strict=True):
+                        r.chunk_advantages[j] = adv
+                if not any_signal:
+                    continue  # every chunk uniform across the group — nothing to learn
                 rollouts.extend(group)
 
             if not rollouts:
                 continue
 
-            model.train()
+            # KL reference logprobs are constants of the frozen warm-start
+            # adapter: compute once per rollout batch (grpo.py convention).
+            ref_sums: list[list[float]] | None = None
+            if can_kl:
+                ref_sums = []
+                model.set_adapter("ref")
+                with torch.no_grad():
+                    for rollout in rollouts:
+                        ref_sums.append(
+                            [
+                                grammar_logprob(
+                                    model, grammar, prompt_ids, gen_ids, device=device
+                                )[0].item()
+                                for prompt_ids, gen_ids, _ in rollout.chunks
+                            ]
+                        )
+                model.set_adapter("default")
+
+            # Gradient pass stays in eval mode ON PURPOSE: train() enables LoRA
+            # dropout, which perturbs the recomputed logprobs vs the rollout's
+            # and makes importance ratios != 1 even on-policy. Grads flow fine
+            # in eval; only dropout/batchnorm behavior differs.
             batch_loss = 0.0
             for _ in range(updates_per_batch):
                 optimizer.zero_grad()
                 batch_loss = 0.0
-                for rollout in rollouts:
-                    for prompt_ids, gen_ids, lp_old_sum in rollout.chunks:
+                for ri, rollout in enumerate(rollouts):
+                    for ci, (prompt_ids, gen_ids, lp_old_sum) in enumerate(rollout.chunks):
+                        adv = rollout.chunk_advantages[ci]
+                        if abs(adv) < 1e-12 and not can_kl:
+                            continue  # zero-advantage chunk contributes no gradient
                         lp_sum, n_tok = grammar_logprob(
                             model, grammar, prompt_ids, gen_ids, device=device
                         )
                         ratio = torch.exp(lp_sum - lp_old_sum)
                         clipped = torch.clamp(ratio, 1.0 - clip_lo, 1.0 + clip_hi)
-                        adv = rollout.advantage
                         surrogate = torch.minimum(ratio * adv, clipped * adv)
                         step_loss = -surrogate
+
+                        if ref_sums is not None:
+                            step_loss = step_loss + kl_coeff * (lp_sum - ref_sums[ri][ci]) / n_tok
 
                         if loss_norm == "dr_grpo":
                             scale = n_tok / (norm_constant * len(rollouts))

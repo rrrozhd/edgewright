@@ -67,7 +67,9 @@ def test_distant_reward_without_critic():
         decision(ROUTE_ESCALATE),
         decision(ROUTE_SKIP),
     ]
-    r = routing_reward(pairs, decisions, lam=0.0, escalation_cost_tokens=1000, cost_cap=10000)
+    r = routing_reward(
+        pairs, decisions, lam=0.0, escalation_cost_tokens=1000, cost_cap_per_chunk=4000
+    )
     assert r.precision == 1 / 2  # one of two emitted edges matches the teacher
     assert r.recall == 2 / 3  # A extracted + C escalated; B missed
     assert r.n_escalated == 1
@@ -109,7 +111,7 @@ def test_degenerate_policies_are_dominated():
     gold_extract = [decision(ROUTE_EXTRACT, [("supplier", "A")]), decision(ROUTE_SKIP)]
     skip_all = [decision(ROUTE_SKIP), decision(ROUTE_SKIP)]
     escalate_all = [decision(ROUTE_ESCALATE), decision(ROUTE_ESCALATE)]
-    kw = dict(lam=0.4, escalation_cost_tokens=5000, cost_cap=10000)
+    kw = dict(lam=0.4, escalation_cost_tokens=5000, cost_cap_per_chunk=5000)
     r_good = routing_reward(pairs, gold_extract, **kw)
     r_skip = routing_reward(pairs, skip_all, **kw)
     r_esc = routing_reward(pairs, escalate_all, **kw)
@@ -117,6 +119,39 @@ def test_degenerate_policies_are_dominated():
     assert r_good.reward > r_esc.reward  # escalating everything pays λ
     assert r_esc.recall == 1.0 and r_esc.normalized_cost == 1.0
     assert r_skip.recall == 0.0 and r_skip.precision == 1.0  # claims nothing
+
+
+def test_per_chunk_rewards_decompose_credit():
+    from kgat.train.backfill_routing import per_chunk_rewards
+
+    pairs = [
+        pair([("supplier", "A")]),  # extracted correctly
+        pair([("partner", "B")]),  # skipped despite gold -> punished HERE, not globally
+        pair([]),  # correct skip
+        pair([("customer", "C")]),  # escalated
+    ]
+    decisions = [
+        decision(ROUTE_EXTRACT, [("supplier", "A")], gen_tokens=20),
+        decision(ROUTE_SKIP, gen_tokens=5),
+        decision(ROUTE_SKIP, gen_tokens=5),
+        decision(ROUTE_ESCALATE, gen_tokens=5),
+    ]
+    per_chunk, mean = per_chunk_rewards(
+        pairs, decisions, lam=0.4, escalation_cost_tokens=2000, cost_cap_per_chunk=2000
+    )
+    assert len(per_chunk) == 4
+    # The bad skip is the WORST chunk; the correct skip the best; escalation
+    # pays lam for its full recall.
+    assert per_chunk[1] == min(per_chunk)
+    assert per_chunk[2] == max(per_chunk)
+    assert per_chunk[0] > per_chunk[3]  # correct extraction beats paying for escalation
+    assert mean == pytest.approx(sum(per_chunk) / 4)
+    # Cost normalization is per chunk: the escalated chunk alone hits the cap
+    # (5 gen + 2000 escalation > 2000 cap, clamped) -> P=1, R=1, minus lam.
+    assert per_chunk[3] == pytest.approx(1.0 - 0.4)
+
+    with pytest.raises(ValueError):
+        per_chunk_rewards(pairs, decisions[:2], lam=0.1)
 
 
 def test_empty_filing_and_validation():

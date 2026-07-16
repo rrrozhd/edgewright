@@ -132,7 +132,7 @@ def routing_reward(
     judge: EdgeJudgeFn | None = None,
     lam: float = 0.1,
     escalation_cost_tokens: float = 2000.0,
-    cost_cap: float = 20000.0,
+    cost_cap_per_chunk: float = 2000.0,
     precision_weight: float = 0.5,
     recall_weight: float = 0.5,
 ) -> RoutingReward:
@@ -151,7 +151,12 @@ def routing_reward(
       nothing. No gold edges -> 1.0.
     * **cost** — small-model generated tokens across every chunk plus
       ``escalation_cost_tokens`` per escalation (the big-model call, priced in
-      the same unit), normalized by ``cost_cap`` and clamped to [0, 1].
+      the same unit), normalized by ``cost_cap_per_chunk × n_chunks`` and
+      clamped to [0, 1]. Per-CHUNK normalization is the FinKG sweep-v1 lesson:
+      a fixed episode-level cap gives λ different leverage on small vs large
+      filings. With the default cap equal to the escalation price, normalized
+      cost ≈ the fraction of chunks escalated — λ reads directly against the
+      frontier's escalation axis.
 
     ``escalate-everything`` scores perfect recall at maximum cost;
     ``skip-everything`` is free but scores recall 0 on any filing with edges —
@@ -166,8 +171,8 @@ def routing_reward(
         raise ValueError(f"{len(pairs)} pairs vs {len(decisions)} decisions")
     if lam < 0:
         raise ValueError(f"lam must be >= 0, got {lam}")
-    if cost_cap <= 0:
-        raise ValueError(f"cost_cap must be positive, got {cost_cap}")
+    if cost_cap_per_chunk <= 0:
+        raise ValueError(f"cost_cap_per_chunk must be positive, got {cost_cap_per_chunk}")
 
     n_emitted = n_accepted = n_escalated = 0
     gold_total = gold_recovered = 0
@@ -201,7 +206,8 @@ def routing_reward(
 
     precision = score_sum / n_emitted if n_emitted else 1.0
     recall = gold_recovered / gold_total if gold_total else 1.0
-    normalized = max(0.0, min(cost / cost_cap, 1.0))
+    cap = cost_cap_per_chunk * max(1, len(pairs))
+    normalized = max(0.0, min(cost / cap, 1.0))
     reward = precision_weight * precision + recall_weight * recall - lam * normalized
     return RoutingReward(
         reward=reward,
@@ -213,6 +219,75 @@ def routing_reward(
         n_accepted=n_accepted,
         n_escalated=n_escalated,
     )
+
+
+def per_chunk_rewards(
+    pairs: Sequence[ExtractionPair],
+    decisions: Sequence[ChunkDecision],
+    *,
+    judge: EdgeJudgeFn | None = None,
+    lam: float = 0.1,
+    escalation_cost_tokens: float = 2000.0,
+    cost_cap_per_chunk: float = 2000.0,
+    precision_weight: float = 0.5,
+    recall_weight: float = 0.5,
+) -> tuple[list[float], float]:
+    """Per-chunk reward decomposition — exact credit assignment for routing GRPO.
+
+    Unlike traversal (one entangled terminal reward), the routing reward
+    decomposes: each chunk gets its own
+    ``w_p·precision_i + w_r·recall_i − λ·cost_i`` where precision_i is the mean
+    judge score over the chunk's emitted edges (1.0 when nothing is claimed —
+    recall carries the pressure to claim), recall_i is the chunk's teacher edges
+    recovered (escalate recovers all, skip none; 1.0 when the chunk has none),
+    and cost_i is the chunk's tokens (+ escalation price) over
+    ``cost_cap_per_chunk``. Returns ``(per_chunk, mean)``.
+
+    Note the aggregation difference vs :func:`routing_reward`: this is the
+    MACRO (chunk-equal) objective — the right shape for per-decision credit —
+    while ``routing_reward`` is micro (edge-weighted) and stays the evaluation
+    aggregate. GRPO groups roll out the SAME chunk list, so group-relative
+    advantages computed per chunk position are matched-pair comparisons: the
+    write-path analog of exact potential shaping (DESIGN-GRAPH-RL §B), with no
+    approximation at all.
+    """
+    if len(pairs) != len(decisions):
+        raise ValueError(f"{len(pairs)} pairs vs {len(decisions)} decisions")
+    if lam < 0:
+        raise ValueError(f"lam must be >= 0, got {lam}")
+    if cost_cap_per_chunk <= 0:
+        raise ValueError(f"cost_cap_per_chunk must be positive, got {cost_cap_per_chunk}")
+
+    rewards: list[float] = []
+    for pair, decision in zip(pairs, decisions, strict=True):
+        gold = set(pair.triples)
+        cost = decision.gen_tokens
+
+        if decision.route == ROUTE_ESCALATE:
+            precision_i, recall_i = 1.0, 1.0
+            cost += escalation_cost_tokens
+        elif decision.route == ROUTE_SKIP:
+            precision_i, recall_i = 1.0, (0.0 if gold else 1.0)
+        elif decision.route == ROUTE_EXTRACT:
+            scores = []
+            for relation, target in decision.triples:
+                if judge is None:
+                    scores.append(1.0 if (relation, target) in gold else 0.0)
+                else:
+                    scores.append(max(0.0, min(1.0, float(judge(pair, relation, target)))))
+            precision_i = sum(scores) / len(scores) if scores else 1.0
+            recall_i = (
+                len(set(decision.triples) & gold) / len(gold) if gold else 1.0
+            )
+        else:
+            raise ValueError(f"unknown route {decision.route!r}")
+
+        cost_i = max(0.0, min(cost / cost_cap_per_chunk, 1.0))
+        rewards.append(
+            precision_weight * precision_i + recall_weight * recall_i - lam * cost_i
+        )
+    mean = sum(rewards) / len(rewards) if rewards else 0.0
+    return rewards, mean
 
 
 __all__ = [
@@ -228,4 +303,5 @@ __all__ = [
     "judge_from_critic",
     "RoutingReward",
     "routing_reward",
+    "per_chunk_rewards",
 ]
