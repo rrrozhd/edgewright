@@ -30,7 +30,8 @@ real-graph training corpus is exported.
 **Write path (backfill, 2026-07 — active):** trained on distant supervision from
 a production SEC-filing pipeline's own logged extractions (every committed edge
 stores its evidence), the grammar-constrained 0.6B extractor recovers **~86% of
-the teacher's edges while escalating only ~21–28% of chunks** to the teacher —
+the teacher's edges at 27.8% escalation on the held-out test mix** (an estimated
+~21% at the deployment chunk distribution; 25.1% with per-route thresholds) —
 a dialable cost/quality frontier for graph construction, with escalation rate as
 the cost axis. Phase 2 — GRPO over per-chunk `{skip | extract | escalate}` with
 a judge-audited reward — is wired and GPU-validated at smoke scale: the teacher's
@@ -200,7 +201,7 @@ src/kgat/
   baselines/      RoG / GCR / GNN-RAG wrappers — stubs
   utils/          HF loading, JSONL + optional W&B logging, seeding
 scripts/          download_data / run_sft / run_grpo / run_backfill_pilot / eval_frontier / sweep
-tests/            pytest suite (135 tests; every module above with pure-python coverage)
+tests/            pytest suite (152 tests; every module above with pure-python coverage)
 ```
 
 ## Design notes (deviations from the brief, and why)
