@@ -209,6 +209,7 @@ def decode_pairs(
     max_prompt_tokens: int = 1024,
     grammar_for: Any = None,
     normalize: Any = None,
+    mark_filer: bool = False,
 ) -> list[ExtractionOutcome]:
     """Greedy grammar-constrained extraction over pairs with the loaded model.
 
@@ -228,12 +229,17 @@ def decode_pairs(
         return tuple((r, normalize(t)) for r, t in triples)
 
     outcomes: list[ExtractionOutcome] = []
+    prompt_lens, n_truncated = [], 0
     for i, pair in enumerate(pairs):
         g = grammar_for(pair) if grammar_for is not None else grammar
-        prompt = format_extraction_prompt(pair.filer, pair.text, g.relations)
+        prompt = format_extraction_prompt(
+            pair.filer, pair.text, g.relations, mark_filer=mark_filer
+        )
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
+        prompt_lens.append(len(prompt_ids))
         if len(prompt_ids) > max_prompt_tokens:  # keep the tail ("...extraction:")
             prompt_ids = prompt_ids[-max_prompt_tokens:]
+            n_truncated += 1
 
         def logits_fn(generated: tuple[int, ...], allowed: list[int], _prompt=prompt_ids):
             input_ids = torch.tensor([_prompt + list(generated)], dtype=torch.long, device=device)
@@ -255,6 +261,15 @@ def decode_pairs(
         )
         if (i + 1) % 25 == 0:
             print(f"  decoded {i + 1}/{len(pairs)}")
+    if prompt_lens:
+        mean_len = sum(prompt_lens) / len(prompt_lens)
+        # Marked prompts run a few tokens longer per mention; at fixed
+        # max_prompt_tokens that costs left-truncated chunk text — log it so a
+        # marked-vs-unmarked delta can be checked against a truncation confound.
+        print(
+            f"  prompt tokens: mean={mean_len:.0f} max={max(prompt_lens)} "
+            f"truncated={n_truncated}/{len(prompt_lens)} (mark_filer={mark_filer})"
+        )
     return outcomes
 
 
@@ -290,6 +305,12 @@ def main() -> None:
         action="store_true",
         help="score with resolver-style normalized names (recommended with --targets chunk)",
     )
+    parser.add_argument(
+        "--entity-markers",
+        action="store_true",
+        help="wrap the filer's chunk mentions with [F]…[/F] markers (must match the "
+        "adapter's SFT setting — entity_markers: true)",
+    )
     parser.add_argument("--min-recall", type=float, default=0.8, help="success-gate recall floor")
     parser.add_argument(
         "--taus", default=None, help="comma-separated thresholds (default 0.00..1.05 step 0.05)"
@@ -306,6 +327,22 @@ def main() -> None:
     model, tokenizer, device = load_causal_lm(
         args.model_id, adapter_path=args.adapter, device=args.device, four_bit=four_bit
     )
+
+    # Prompt construction MUST match how the adapter was trained. The adapter stamps
+    # its settings in extractor_meta.json; that file wins over the CLI flag (a marked
+    # adapter eval'd unmarked, or vice-versa, silently produces a garbage comparison).
+    mark_filer = args.entity_markers
+    if args.adapter is not None:
+        meta_path = Path(args.adapter) / "extractor_meta.json"
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta_mark = bool(meta.get("entity_markers", False))
+            if meta_mark != args.entity_markers:
+                print(
+                    f"cascade eval: overriding --entity-markers={args.entity_markers} with "
+                    f"entity_markers={meta_mark} from adapter meta ({meta_path})"
+                )
+            mark_filer = meta_mark
     grammar = None
     grammar_for = None
     if args.targets == "chunk":
@@ -345,6 +382,7 @@ def main() -> None:
         max_prompt_tokens=args.max_prompt_tokens,
         grammar_for=grammar_for,
         normalize=normalize,
+        mark_filer=mark_filer,
     )
 
     out_dir = Path(args.out_dir)

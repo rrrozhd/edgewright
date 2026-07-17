@@ -126,6 +126,7 @@ def rollout_episode(
     max_prompt_tokens: int,
     judge: EdgeJudgeFn | None,
     reward_kwargs: dict,
+    mark_filer: bool = False,
 ) -> EpisodeRollout:
     """Sample one routing of a filing and score it (no grad).
 
@@ -139,7 +140,9 @@ def rollout_episode(
     chunk_records = []
     decisions = []
     for pair, grammar in zip(pairs, grammars, strict=True):
-        prompt = format_extraction_prompt(pair.filer, pair.text, grammar.relations)
+        prompt = format_extraction_prompt(
+            pair.filer, pair.text, grammar.relations, mark_filer=mark_filer
+        )
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         if len(prompt_ids) > max_prompt_tokens:
             prompt_ids = prompt_ids[-max_prompt_tokens:]
@@ -245,6 +248,21 @@ def run_grpo_routing(cfg: Any) -> Path:
         )
 
     targets_mode = str(g.get("targets_mode", "vocab"))
+    mark_filer = bool(g.get("entity_markers", False))
+    # The warm-start extractor stamped its prompt settings; the GRPO prompt MUST
+    # match or the policy fine-tunes a distribution shifted from the SFT one.
+    if adapter_path is not None:
+        meta_path = Path(adapter_path) / "extractor_meta.json"
+        if meta_path.exists():
+            meta_mark = bool(
+                _json.loads(meta_path.read_text(encoding="utf-8")).get("entity_markers", False)
+            )
+            if meta_mark != mark_filer:
+                raise ValueError(
+                    f"entity_markers mismatch: config={mark_filer} but warm-start adapter "
+                    f"{adapter_path} was trained with entity_markers={meta_mark}. Set "
+                    f"train.grpo_routing.entity_markers={meta_mark} to match."
+                )
     if targets_mode == "chunk":
         from kgat.data.chunk_targets import chunk_target_candidates
 
@@ -333,6 +351,7 @@ def run_grpo_routing(cfg: Any) -> Path:
                         max_prompt_tokens=max_prompt_tokens,
                         judge=judge,
                         reward_kwargs=reward_kwargs,
+                        mark_filer=mark_filer,
                     )
                     for _ in range(group_size)
                 ]

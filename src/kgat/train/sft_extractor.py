@@ -47,14 +47,20 @@ def encode_extraction_example(
     grammar: TripleGrammar,
     *,
     max_seq_len: int,
+    mark_filer: bool = False,
 ) -> dict[str, list[int]]:
     """Tokenize one pair with completion-only labels.
 
     ``input_ids = prompt + grammar-canonical target``; ``labels`` mask the prompt
     with -100. Overlong prompts truncate from the LEFT so the chunk-text tail and
     the trailing ``extraction:`` cue always survive (mirrors ``sft.encode_example``).
+
+    ``mark_filer`` wraps the filer's chunk mentions with ``[F]…[/F]`` markers — must
+    match the inference-time prompt (single-sourced in ``format_extraction_prompt``).
     """
-    prompt = format_extraction_prompt(pair.filer, pair.text, grammar.relations)
+    prompt = format_extraction_prompt(
+        pair.filer, pair.text, grammar.relations, mark_filer=mark_filer
+    )
     prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
     target_ids = encode_triples_target(pair.triples, grammar)
 
@@ -105,6 +111,7 @@ def run_sft_extractor(cfg: Any) -> Path:
     max_seq_len = int(sft.max_seq_len)
     max_triples = int(sft.max_triples)
     targets_mode = str(sft.get("targets_mode", "vocab"))
+    mark_filer = bool(sft.get("entity_markers", False))
 
     if targets_mode == "chunk":
         # Open-vocabulary: candidates are the chunk's own capitalized spans; the
@@ -135,13 +142,14 @@ def run_sft_extractor(cfg: Any) -> Path:
             encoded.append(
                 encode_extraction_example(
                     replace(p, triples=tuple(kept)), tokenizer, grammar,
-                    max_seq_len=max_seq_len,
+                    max_seq_len=max_seq_len, mark_filer=mark_filer,
                 )
             )
         n_gold = sum(len(p.triples) for p in pairs)
         print(
             f"extractor SFT (chunk-local targets): {len(encoded)} pairs, "
-            f"{dropped}/{n_gold} gold edges unmatchable in-chunk (dropped)"
+            f"{dropped}/{n_gold} gold edges unmatchable in-chunk (dropped), "
+            f"entity_markers={mark_filer}"
         )
     elif targets_mode == "vocab":
         grammar = build_triple_grammar(
@@ -152,17 +160,20 @@ def run_sft_extractor(cfg: Any) -> Path:
             max_triples=max_triples,
         )
         encoded = [
-            encode_extraction_example(p, tokenizer, grammar, max_seq_len=max_seq_len)
+            encode_extraction_example(
+                p, tokenizer, grammar, max_seq_len=max_seq_len, mark_filer=mark_filer
+            )
             for p in pairs
         ]
         print(
             f"extractor SFT: {len(encoded)} pairs from {data_dir}, "
-            f"{len(grammar.targets)} grammar targets (device={device})"
+            f"{len(grammar.targets)} grammar targets (device={device}), "
+            f"entity_markers={mark_filer}"
         )
     else:
         raise ValueError(f"targets_mode must be 'vocab' or 'chunk', got {targets_mode!r}")
 
-    return fit_lora(
+    result_dir = fit_lora(
         model,
         tokenizer,
         device,
@@ -171,6 +182,14 @@ def run_sft_extractor(cfg: Any) -> Path:
         output_dir=output_dir,
         seed=int(cfg.seed),
     )
+    # Stamp the prompt-construction settings next to the adapter so eval / GRPO
+    # warm-start reproduce the exact prompt (marking + target mode). Reading this
+    # back is what prevents a marked adapter from being silently eval'd unmarked.
+    (result_dir / "extractor_meta.json").write_text(
+        json.dumps({"entity_markers": mark_filer, "targets_mode": targets_mode}, indent=2),
+        encoding="utf-8",
+    )
+    return result_dir
 
 
 def _main() -> None:

@@ -10,6 +10,8 @@ sft_extractor:
   max_examples: null          # cap for smoke runs
   max_triples: 8              # grammar cap on triples per chunk
   targets_mode: vocab         # vocab (closed list from vocab.json) | chunk (open-vocab spans)
+  entity_markers: false       # wrap filer's chunk mentions with [F]…[/F] (direction cue);
+                              # eval must pass --entity-markers to match this adapter
   learning_rate: 2.0e-4
   epochs: 3
   # Same memory story as train/sft.yaml: the CE loss materializes
