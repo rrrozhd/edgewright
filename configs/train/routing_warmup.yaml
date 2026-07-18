@@ -1,0 +1,25 @@
+# Teach the ESCALATE action into the extractor before GRPO routing
+# (kgat.train.routing_warmup). Measured: a plain SFT extractor puts P(ESCALATE)
+# ~6e-9, so RL can never sample it — the action must be taught, not explored.
+#   python -m kgat.train.routing_warmup train=routing_warmup model=qwen3-0.6b
+routing_warmup:
+  data_dir: data/backfill/real-strat-v2
+  split: train
+  output_dir: outputs/adapters/${model.name}-routing-warmup
+  max_examples: null
+  max_triples: 28
+  entity_markers: true        # match the markers extractor recipe
+  # Which chunks get ESCALATE as their target (free difficulty proxy):
+  hard_min_edges: 4           # >= this many gold edges -> hard
+  extra_random: 0.05          # plus this share of easy chunks, for varied context
+  learning_rate: 2.0e-4
+  epochs: 2
+  batch_size: 4
+  grad_accum: 8
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  max_seq_len: 1024
+  four_bit: auto
+  gradient_checkpointing: true
+  group_by_length: true
