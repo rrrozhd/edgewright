@@ -218,8 +218,8 @@ CLI defaults or documentation.
 
 ## Shadow-mode architecture
 
-For each eligible chunk, Edgewright performs one extractor decode and calculates
-all routing signals. Two policy paths then run on the same record:
+For each eligible `shadow_enabled` chunk, Edgewright performs one extractor decode,
+calculates all routing signals, and runs two policy paths on the same record:
 
 1. **Authoritative path:** the existing confidence policy determines whether the
    chunk escalates.
@@ -229,9 +229,11 @@ Only the authoritative result is returned to the live pipeline. Shadow evaluatio
 must not make a teacher call, suppress an authoritative call, write graph data, or
 change user-visible behavior.
 
-The audit record includes the Alphina provenance link, all signal values, both
-decisions, both policy identities, projected teacher-call delta, latency, and any
-fallback or exclusion reason.
+The shadow-enabled audit record includes the Alphina provenance link, all signal
+values, both decisions, both policy identities, projected teacher-call delta,
+latency, and any fallback or exclusion reason. A `confidence_only_control` audit
+record contains the authoritative decision and policy identity plus the explicit
+`control_cohort` exclusion reason; it does not claim a candidate signal or decision.
 
 ### Alphina provenance envelope contract
 
@@ -300,11 +302,13 @@ that chunk from shadow promotion evidence.
 Shadow observation runs for at least 10,000 eligible probability-sample chunks and
 seven complete UTC days; both minima must be met. The promotion cohort is a
 deterministic 1-in-N hash sample of production `chunk_id`s sized to exceed the
-volume target. All policy disagreements are also retained as a separate diagnostic
-census. Population-rate, workload-mix, projected-cost, drift, PSI, latency, and
-error gates use only the probability sample. The disagreement census is never
-pooled into those estimators and cannot make a gate pass; it is used for qualitative
-failure analysis and bucket discovery only.
+volume target. All policy disagreements among `shadow_enabled` chunks are also
+retained as a separate diagnostic census; control chunks cannot enter this census
+because they do not compute a candidate decision. Population-rate, workload-mix,
+projected-cost, drift, PSI, latency, and error gates use only the probability
+sample. The disagreement census is never pooled into those estimators and cannot
+make a gate pass; it is used for qualitative failure analysis and bucket discovery
+only.
 
 Within the probability sample, a second stable hash assigns 5% of chunks to a
 `confidence_only_control` cohort and 95% to `shadow_enabled`. Assignment is fixed
