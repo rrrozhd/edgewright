@@ -1,5 +1,5 @@
 {
-  "code_commit": "2ae05ca3f3a3adf31ac3e6e5c73a707c78fcf309",
+  "code_commit": "64c33eef0f06c6941c4f785fc75d7f1810deed93",
   "decision_sha256": "b3d5f7190d68a1a654cccb8628f1a45c516a056b09179cc8ca4cf50da9ac52b7",
   "environment": {
     "cuda": "unavailable",
@@ -28,6 +28,7 @@
       "outputs/backfill/cascade-markers/outcomes.jsonl"
     ],
     "legacy_unstructured_contract": true,
+    "loose_match": false,
     "max_prompt_tokens": 1024,
     "max_triples": 28,
     "targets": "vocab",
@@ -46,5 +47,5 @@
     "threshold": 0.85
   },
   "policy_id": "confidence-tau-0.85-markers-vocab-max28",
-  "projection_sha256": "4a6b8bd09413cbe82110af4f5277c4be23581c732675636afaa08f02743a98cc"
+  "projection_sha256": "283ed385c83d055cc8f344525bdb0a0e4c4a074e2d976c986aa78afd14ab5162"
 }
