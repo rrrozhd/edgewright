@@ -125,10 +125,14 @@ candidate or support a savings claim.
 Each candidate is evaluated at exact matched escalation budgets of 15%, 20%, and
 25%, and across its full threshold frontier. For a budget `b` and `n` chunks,
 exactly `floor(b*n)` chunks are escalated. Rows sort by ascending routing signal,
-then stable Alphina chunk ID; this rule resolves ties. No interpolation is used for
-gate decisions. Charts may interpolate for display only and must label interpolated
-values as non-gating. Reports include micro precision, recall, F1, exact match,
-escalation rate, routing AUROC, and per-bucket behavior.
+then stable Alphina chunk ID; this rule resolves ties. The frozen legacy
+`real-strat-v2` split predates Alphina envelope IDs, so canonical migration
+validation uses `legacy_chunk_key = SHA256(exact raw JSONL line bytes)` as its
+stable, content-addressed tie key and records that exception in the manifest. The
+exception is forbidden for shadow or production traffic. No interpolation is used
+for gate decisions. Charts may interpolate for display only and must label
+interpolated values as non-gating. Reports include micro precision, recall, F1,
+exact match, escalation rate, routing AUROC, and per-bucket behavior.
 
 At each of 15%, 20%, and 25%, the candidate must be non-inferior to confidence:
 
