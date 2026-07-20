@@ -146,8 +146,7 @@ The selected operating point must satisfy all of the following against confidenc
 - F1 is equal or higher;
 - exact match regresses by no more than 0.005 absolute;
 - total projected cost falls by at least 10%; and
-- the result is not an isolated threshold accident: the candidate remains
-  competitive across the neighboring budget points.
+- the candidate passes the explicit 15%/20%/25% robustness gate above.
 
 If no signal passes every gate, confidence remains the sole production policy and
 no shadow candidate is enabled.
@@ -298,11 +297,26 @@ that chunk from shadow promotion evidence.
 
 ## Shadow acceptance and monitoring
 
-Shadow observation runs for at least 10,000 eligible chunks and seven complete UTC
-days; both minima must be met. The sample is the deterministic 1-in-N hash sample
-of production `chunk_id`s needed to reach the volume target, plus all policy
-disagreements. Eligible evidence requires valid provenance, complete mandatory and
-shadow audit records, a recognized policy artifact, and no replay/test marker.
+Shadow observation runs for at least 10,000 eligible probability-sample chunks and
+seven complete UTC days; both minima must be met. The promotion cohort is a
+deterministic 1-in-N hash sample of production `chunk_id`s sized to exceed the
+volume target. All policy disagreements are also retained as a separate diagnostic
+census. Population-rate, workload-mix, projected-cost, drift, PSI, latency, and
+error gates use only the probability sample. The disagreement census is never
+pooled into those estimators and cannot make a gate pass; it is used for qualitative
+failure analysis and bucket discovery only.
+
+Within the probability sample, a second stable hash assigns 5% of chunks to a
+`confidence_only_control` cohort and 95% to `shadow_enabled`. Assignment is fixed
+for the entire window and stratified by chunk-length and filer-volume buckets.
+Control chunks execute the authoritative confidence path and mandatory audit but do
+not calculate, persist, or export the candidate decision. Shadow-enabled chunks run
+both policy paths. Both cohorts otherwise use identical model, adapter, grammar,
+infrastructure, and write-path code.
+
+Eligible evidence requires valid provenance, a recognized authoritative policy
+artifact, complete mandatory audit, and no replay/test marker. Candidate-specific
+promotion evidence additionally requires a complete shadow decision record.
 
 Coverage is adequate only when the sample covers strata representing at least 95%
 of production volume and every gating stratum contains at least 100 chunks. Strata
@@ -326,7 +340,8 @@ Promotion eligibility requires:
 - candidate escalation-rate drift from its artifact expectation is at most 2.0
   percentage points overall and 3.0 points in every gating stratum;
 - Edgewright p95 processing-latency regression is at most 5% and p99 regression is
-  at most 10% relative to the simultaneous confidence path;
+  at most 10%, comparing `shadow_enabled` with `confidence_only_control` in the
+  probability sample after reporting the same percentiles per declared stratum;
 - operational-error-rate increase is at most 0.1 percentage points, agreement
   fallback rate is at most 0.1%, mandatory audit completeness is 100%, and optional
   shadow record completeness is at least 99.9%;
@@ -341,6 +356,15 @@ to the canonical labeled evaluation. During the shadow window that evaluation is
 replayed once against the frozen candidate artifact; its decision hash and metrics
 must reproduce exactly. Shadow traffic validates workload, cost, latency, failure,
 and audit assumptions only.
+
+For the operational-error gate, the denominator is all eligible attempted chunks in
+each randomized cohort. The numerator is chunks ending in an uncaught extraction or
+routing exception, timeout, policy-artifact load/schema failure, mandatory-audit
+dead-letter, or graph-write ineligibility caused by an Edgewright failure. Invalid
+Alphina provenance is reported separately and excluded from both cohort error-rate
+numerators and denominators because shadow assignment cannot change it. The gate
+compares the shadow-enabled error rate minus the confidence-only control error rate
+and requires the increase to be no more than 0.001 absolute.
 
 Passing shadow gates does not activate the candidate automatically.
 
