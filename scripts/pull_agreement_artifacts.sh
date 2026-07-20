@@ -43,7 +43,7 @@ EXPECTED_CONTENT="$(cat "$EXPECTED_HASHES")"
 }
 
 mkdir -p "$DESTINATION"
-rsync -az --protect-args -e "$RSYNC_SSH" \
+rsync -az -e "$RSYNC_SSH" \
   "root@$HOST:$REMOTE_OUTPUT/" "$DESTINATION/"
 
 (
